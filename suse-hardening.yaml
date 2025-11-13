@@ -12,21 +12,7 @@
     max_password_attempts: 5 # Hatalı şifre denemesi limiti
     password_lockout_time: 900 # Şifre kilitlenme süresi (saniye)
 
-  tasks:
-    # --- 1. Kullanılmayan Servislerin Kaldırılması ve Güvenlik Ayarları ---
-    - name: 1.1. Kullanilmayan veya Guvenlik Riski Tasiyan Servisleri Kaldir (Zypper)
-      # Lütfen kaldırılacak paketleri ortamınıza göre ayarlayın (örn. nis, talk, rsh, tftp, ldap, cups vb.)
-      community.general.zypper:
-        name: 
-          - telnetd
-          - rsh-server
-          - nis
-        state: absent
-      tags:
-        - services
-        - remove
-
-    # --- 2. Çekirdek (Kernel/Sysctl) Güvenlik Ayarları ---
+# --- 2. Çekirdek (Kernel/Sysctl) Güvenlik Ayarları ---
 
     - name: 2.1. Core Dump'lari Devre Disi Birak (Mevcut Adım)
       # Uygulama çökmeleri sırasında hassas veri sızıntısını önler
