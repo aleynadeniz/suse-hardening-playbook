@@ -1,6 +1,6 @@
 ---
 - name: SUSE Hardening Ayarlari
-  hosts: suse_hosts 
+  hosts: suse_hosts
   become: yes
 
   vars:
@@ -12,7 +12,9 @@
     max_password_attempts: 5 # Hatalı şifre denemesi limiti
     password_lockout_time: 900 # Şifre kilitlenme süresi (saniye)
 
-# --- 2. Çekirdek (Kernel/Sysctl) Güvenlik Ayarları ---
+  tasks:  # <--- EKSİK OLAN 'tasks:' ANAHTAR KELİMESİ BURAYA EKLENDİ
+
+    # --- 2. Çekirdek (Kernel/Sysctl) Güvenlik Ayarları ---
 
     - name: 2.1. Core Dump'lari Devre Disi Birak (Mevcut Adım)
       # Uygulama çökmeleri sırasında hassas veri sızıntısını önler
@@ -114,9 +116,9 @@
         - password_complexity
 
     - name: 3.4. Basarisiz Giris Denemesi Limiti ve Kilitlenme Ayari (pam_faillock)
-      # /etc/pam.d/common-auth dosyasında pam_faillock modülünü ekleyerek hatalı deneme limitini ayarla
+      # SUSE'de symlink'in işaret ettiği gerçek dosyayı düzenliyoruz: common-auth-pc
       blockinfile:
-        path: /etc/pam.d/common-auth
+        path: /etc/pam.d/common-auth-pc # <--- GÜVENLİK VE UYUMLULUK İÇİN common-auth-pc OLARAK DÜZELTİLDİ
         block: |
           auth    required    pam_faillock.so preauth silent audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
           auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
