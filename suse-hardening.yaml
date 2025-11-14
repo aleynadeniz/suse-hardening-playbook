@@ -4,20 +4,17 @@
   become: yes
 
   vars:
-    # 900 saniye = 15 dakika, kullanıcılar için oturum zaman aşımı
     session_timeout_seconds: 900
-    # Kullanıcı şifrelerinin karmaşıklığını ve son kullanma tarihlerini belirleyen ayarlar
-    max_password_age: 90 # Şifre maksimum 90 gün geçerli
-    min_password_age: 7  # Şifre değiştirildikten sonra en az 7 gün beklemeli
-    max_password_attempts: 5 # Hatalı şifre denemesi limiti
-    password_lockout_time: 900 # Şifre kilitlenme süresi (saniye)
+    max_password_age: 90
+    min_password_age: 7
+    max_password_attempts: 5
+    password_lockout_time: 900
 
-  tasks:  # <--- EKSİK OLAN 'tasks:' ANAHTAR KELİMESİ BURAYA EKLENDİ
+  tasks:
 
     # --- 2. Çekirdek (Kernel/Sysctl) Güvenlik Ayarları ---
 
-    - name: 2.1. Core Dump'lari Devre Disi Birak (Mevcut Adım)
-      # Uygulama çökmeleri sırasında hassas veri sızıntısını önler
+    - name: 2.1. Core Dump'lari Devre Disi Birak
       copy:
         content: "* hard core 0\n"
         dest: /etc/security/limits.d/core_security.conf
@@ -27,39 +24,39 @@
       tags:
         - limits
         - core_dump
+      diff: yes
+      register: core_dump_result
 
-    - name: 2.2. Sysctl Ayarlari (net.ipv4 Hardening - Mevcut Adım ve Eksik Olanlar Eklendi)
-      # Temel IP/Ağ güvenliği ayarları ve görseldeki diğer sysctl ayarları
+    - debug:
+        var: core_dump_result
+
+    - name: 2.2. Sysctl Ayarlari (net.ipv4 Hardening)
       sysctl:
         name: '{{ item.key }}'
         value: '{{ item.value }}'
         state: present
         reload: yes
       loop:
-        # IPv4 Yönlendirmeyi Kapat
         - { key: 'net.ipv4.ip_forward', value: '0' }
-        # Tüm ağ arayüzlerinde kaynak yönlendirmeyi (source routing) engelle
         - { key: 'net.ipv4.conf.all.accept_source_route', value: '0' }
         - { key: 'net.ipv4.conf.default.accept_source_route', value: '0' }
-        # Yönlendirmeleri (Redirects) Engelle
         - { key: 'net.ipv4.conf.all.accept_redirects', value: '0' }
         - { key: 'net.ipv4.conf.default.accept_redirects', value: '0' }
-        # Sahte (Spoofed) paketleri kaydet ve reddet
         - { key: 'net.ipv4.conf.all.rp_filter', value: '1' }
-        # Syn flood saldırılarına karşı koruma
         - { key: 'net.ipv4.tcp_syncookies', value: '1' }
-        # ICMP yayın isteklerini yoksay
         - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
-        # Kötü niyetli hata mesajlarını logla ve yoksay
         - { key: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
-        # Sızıntılara karşı koruma (Martian Loglama)
         - { key: 'net.ipv4.conf.all.log_martians', value: '1' }
       tags:
         - sysctl
         - network
+      diff: yes
+      register: sysctl_result
 
-    - name: 2.3. USB Otomatik Yüklemeyi Devre Disi Birak (Mevcut Adım)
-      # Güvenlik için, modprobe komutlarını devre dışı bırakır.
+    - debug:
+        var: sysctl_result
+
+    - name: 2.3. USB Otomatik Yüklemeyi Devre Disi Birak
       lineinfile:
         path: /etc/modprobe.d/usb_blacklist.conf
         line: 'install usb-storage /bin/true'
@@ -68,11 +65,15 @@
       tags:
         - modprobe
         - usb
+      diff: yes
+      register: usb_blacklist_result
+
+    - debug:
+        var: usb_blacklist_result
 
     # --- 3. Kullanıcı ve Parola Politikaları ---
 
-    - name: 3.1. Kullanici Oturum Zaman Asimi Ayari (Mevcut Adım)
-      # Kullanıcı etkileşimi olmazsa oturumu sonlandırır
+    - name: 3.1. Kullanici Oturum Zaman Asimi Ayari
       block:
         - name: Timeout.sh dosyasi olustur
           copy:
@@ -88,9 +89,13 @@
             mode: '0644'
           tags:
             - timeout
+          diff: yes
+          register: timeout_result
 
-    - name: 3.2. Parola Politikalarini Guclendir (/etc/login.defs - Mevcut Adım)
-      # Parola geçerlilik süresi ve bekleme günleri ayarları
+    - debug:
+        var: timeout_result
+
+    - name: 3.2. Parola Politikalarini Guclendir (/etc/login.defs)
       lineinfile:
         path: /etc/login.defs
         regexp: '^{{ item.regex }}'
@@ -103,22 +108,30 @@
       tags:
         - password_policy
         - login_defs
+      diff: yes
+      register: login_defs_result
+
+    - debug:
+        var: login_defs_result
 
     - name: 3.3. Parola Karmasiklik Gereksinimi (pam_pwquality/pam_cracklib)
       lineinfile:
         path: /etc/pam.d/common-password-pc
         regexp: '^(password\s+(required|requisite)\s+pam_(pwquality|cracklib).so)'
-        # minlen=12, dcredit=-1 (en az 1 rakam), ucredit=-1 (en az 1 büyük harf), ocredit=-1 (en az 1 özel karakter), lcredit=-1 (en az 1 küçük harf)
         line: '\1 retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1'
         backrefs: yes
       tags:
         - pam
         - password_complexity
+      diff: yes
+      register: password_complexity_result
 
-    - name: 3.4. Basarisiz Giris Denemesi Limiti ve Kilitlenme Ayari (pam_faillock)
-      # SUSE'de symlink'in işaret ettiği gerçek dosyayı düzenliyoruz: common-auth-pc
+    - debug:
+        var: password_complexity_result
+
+    - name: 3.4. Basarisiz Giris Denemesi Limiti ve Kilitlenme Ayari
       blockinfile:
-        path: /etc/pam.d/common-auth-pc # <--- GÜVENLİK VE UYUMLULUK İÇİN common-auth-pc OLARAK DÜZELTİLDİ
+        path: /etc/pam.d/common-auth-pc
         block: |
           auth    required    pam_faillock.so preauth silent audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
           auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
@@ -127,6 +140,11 @@
       tags:
         - pam
         - lockout
+      diff: yes
+      register: faillock_result
+
+    - debug:
+        var: faillock_result
 
     # --- 4. Dosya Sistemi İzinleri ve Kontrolleri ---
 
@@ -143,34 +161,46 @@
         - /root/.bash_logout
       tags:
         - file_permissions
+      diff: yes
+      register: file_permissions_result
+
+    - debug:
+        var: file_permissions_result
 
     - name: 4.2. Hassas Sistem Dosyalarinin Izinlerini Ayarla
-      # /etc/passwd, /etc/shadow gibi hassas dosyaların izinlerini kontrol et
       file:
         path: '{{ item.path }}'
         mode: '{{ item.mode }}'
       loop:
         - { path: /etc/passwd, mode: '0644' }
-        - { path: /etc/shadow, mode: '0000' } # Sadece root erişimi
+        - { path: /etc/shadow, mode: '0000' }
         - { path: /etc/group, mode: '0644' }
         - { path: /etc/gshadow, mode: '0000' }
       tags:
         - file_permissions
         - sensitive_files
+      diff: yes
+      register: sensitive_files_result
+
+    - debug:
+        var: sensitive_files_result
 
     # --- 5. Diğer Güvenlik Ayarları ---
 
-    - name: 5.1. ctrl-alt-del Islemini Devre Disi Birak (Mevcut Adım - systemd)
-      # Makineye fiziksel erişimi olan kullanıcıların sistemi yeniden başlatmasını engeller
+    - name: 5.1. ctrl-alt-del Islemini Devre Disi Birak
       file:
         path: /etc/systemd/system/ctrl-alt-del.target
-        state: absent # Varsayılan symlink'i siler
+        state: absent
       tags:
         - systemd
         - ctrl_alt_del
+      diff: yes
+      register: ctrl_alt_del_result
+
+    - debug:
+        var: ctrl_alt_del_result
 
     - name: 5.2. /etc/issue ve /etc/issue.net Dosyalarini Guvenlik Bilgileriyle Guncelle
-      # Sistem bilgilerini ifşa etmeyen bir banner ekle
       copy:
         content: |
           Authorized uses only. All activity is logged and monitored. Unauthorized access is prohibited.
@@ -183,13 +213,22 @@
         - /etc/issue.net
       tags:
         - banner
+      diff: yes
+      register: banner_result
 
-    - name: 5.3. AppArmor'u Etkinlestir ve Profilleri Zorunlu Moda Al (SUSE)
-      # SUSE'de AppArmor, Mandatory Access Control (MAC) mekanizmasıdır.
+    - debug:
+        var: banner_result
+
+    - name: 5.3. AppArmor'u Etkinlestir ve Profilleri Zorunlu Moda Al
       command: 'aa-enforce /etc/apparmor.d/*'
       args:
         warn: no
       ignore_errors: yes
+      changed_when: true
       tags:
         - mac
         - apparmor
+      register: apparmor_result
+
+    - debug:
+        var: apparmor_result
