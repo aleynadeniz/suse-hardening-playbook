@@ -1,5 +1,5 @@
 ---
-- name: SUSE Hardening + Audit + Logging + Performance (Diff)
+- name: SUSE Hardening + Audit + Logging + Performance
   hosts: suse_hosts
   become: yes
 
@@ -20,31 +20,22 @@
     # HISTIGNORE
     histignore_value: "SUSEConnect *:subscription-manager *:rhn-register *"
 
-    # Performance limits
+    # Performance parametreleri
     nofile_limit: 65535
     nproc_limit: 65535
 
   tasks:
 
     # --- 1. HISTIGNORE ---
-    - name: Backup /etc/profile
-      copy:
-        src: /etc/profile
-        dest: /etc/profile.bak
-        remote_src: yes
-
-    - name: Set HISTIGNORE
+    - name: Set HISTIGNORE for sensitive commands
       lineinfile:
         path: /etc/profile
         line: 'export HISTIGNORE="{{ histignore_value }}"'
         state: present
-      register: profile_histignore
+      tags:
+        - histignore
 
-    - name: Show diff for /etc/profile
-      debug:
-        var: profile_histignore.diff
-
-    # --- 2. Kernel / Sysctl & USB ---
+    # --- 2. Kernel/Sysctl & USB ---
     - name: Disable core dumps
       copy:
         content: "* hard core 0\n"
@@ -52,10 +43,10 @@
         owner: root
         group: root
         mode: '0644'
-      register: core_dump_result
-
-    - debug:
-        var: core_dump_result
+      tags:
+        - limits
+        - core_dump
+      diff: yes
 
     - name: Sysctl hardening
       sysctl:
@@ -74,10 +65,10 @@
         - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
         - { key: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
         - { key: 'net.ipv4.conf.all.log_martians', value: '1' }
-      register: sysctl_result
-
-    - debug:
-        var: sysctl_result
+      tags:
+        - sysctl
+        - network
+      diff: yes
 
     - name: Disable USB auto load
       lineinfile:
@@ -85,12 +76,12 @@
         line: 'install usb-storage /bin/true'
         create: yes
         state: present
-      register: usb_blacklist_result
+      tags:
+        - modprobe
+        - usb
+      diff: yes
 
-    - debug:
-        var: usb_blacklist_result
-
-    # --- 3. Password Policies ---
+    # --- 3. Kullanıcı ve parola politikaları ---
     - name: Set password policies in /etc/login.defs
       lineinfile:
         path: /etc/login.defs
@@ -100,12 +91,11 @@
         - { regex: '^PASS_MAX_DAYS', line: 'PASS_MAX_DAYS\t{{ max_password_age }}' }
         - { regex: '^PASS_MIN_DAYS', line: 'PASS_MIN_DAYS\t{{ min_password_age }}' }
         - { regex: '^PASS_WARN_AGE', line: 'PASS_WARN_AGE\t7' }
-      register: login_defs_result
+      tags:
+        - password_policy
+      diff: yes
 
-    - debug:
-        var: login_defs_result
-
-    - name: Set pwquality
+    - name: Set pwquality requirements
       lineinfile:
         path: /etc/security/pwquality.conf
         regexp: '^{{ item.regex }}'
@@ -116,12 +106,11 @@
         - { regex: '^ucredit', line: 'ucredit = {{ pwq_ucredit }}' }
         - { regex: '^ocredit', line: 'ocredit = {{ pwq_ocredit }}' }
         - { regex: '^lcredit', line: 'lcredit = {{ pwq_lcredit }}' }
-      register: pwquality_result
+      tags:
+        - pwquality
+      diff: yes
 
-    - debug:
-        var: pwquality_result
-
-    - name: Timeout session
+    - name: Timeout (session inactivity)
       copy:
         content: |
           # /etc/profile.d/timeout.sh
@@ -132,10 +121,9 @@
         owner: root
         group: root
         mode: '0644'
-      register: timeout_result
-
-    - debug:
-        var: timeout_result
+      tags:
+        - timeout
+      diff: yes
 
     - name: Faillock PAM block
       blockinfile:
@@ -145,25 +133,22 @@
           auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
           auth    sufficient    pam_faillock.so authsucc audit
         marker: "# {mark} ANSIBLE MANAGED BLOCK - PAM FAILLOCK"
-      register: faillock_result
+      tags:
+        - pam
+        - lockout
+      diff: yes
 
-    - debug:
-        var: faillock_result
-
-    # --- 4. File Permissions ---
+    # --- 4. File Permissions (only existing files) ---
     - name: Set root dotfiles permissions
       file:
-        path: '{{ item }}'
+        path: /root/.bash_history
         mode: '0600'
         owner: root
         group: root
-      loop:
-        - /root/.bashrc
-        - /root/.bash_history
-      register: file_permissions_result
-
-    - debug:
-        var: file_permissions_result
+        state: file
+      tags:
+        - file_permissions
+      diff: yes
 
     - name: Set sensitive system files permissions
       file:
@@ -174,20 +159,18 @@
         - { path: /etc/shadow, mode: '0000' }
         - { path: /etc/group, mode: '0644' }
         - { path: /etc/gshadow, mode: '0000' }
-      register: sensitive_files_result
-
-    - debug:
-        var: sensitive_files_result
+      tags:
+        - sensitive_files
+      diff: yes
 
     # --- 5. Ctrl-Alt-Del ---
     - name: Disable ctrl-alt-del
       file:
         path: /etc/systemd/system/ctrl-alt-del.target
         state: absent
-      register: ctrl_alt_del_result
-
-    - debug:
-        var: ctrl_alt_del_result
+      tags:
+        - systemd
+      diff: yes
 
     # --- 6. Banner ---
     - name: Update /etc/issue and /etc/issue.net
@@ -201,10 +184,9 @@
       loop:
         - /etc/issue
         - /etc/issue.net
-      register: banner_result
-
-    - debug:
-        var: banner_result
+      tags:
+        - banner
+      diff: yes
 
     # --- 7. AppArmor enforce ---
     - name: Enable AppArmor enforce
@@ -213,19 +195,10 @@
         warn: no
       ignore_errors: yes
       changed_when: true
-      register: apparmor_result
-
-    - debug:
-        var: apparmor_result
+      tags:
+        - apparmor
 
     # --- 8. Performance limits ---
-    - name: Backup limits.conf if exists
-      copy:
-        src: /etc/security/limits.conf
-        dest: /etc/security/limits.conf.bak
-        remote_src: yes
-      ignore_errors: yes
-
     - name: Set /etc/security/limits.conf for nofile/nproc
       blockinfile:
         path: /etc/security/limits.conf
@@ -235,35 +208,25 @@
           * soft nproc {{ nproc_limit }}
           * hard nproc {{ nproc_limit }}
         marker: "# {mark} ANSIBLE MANAGED BLOCK - PERFORMANCE"
-      register: performance_result
-
-    - debug:
-        var: performance_result
+      tags:
+        - performance
+      diff: yes
 
     - name: Set ulimit
       shell: "ulimit -n {{ nofile_limit }}"
-      register: ulimit_result
-
-    - debug:
-        var: ulimit_result
+      tags:
+        - performance
 
     # --- 9. Journald persistent log ---
-    - name: Backup journald.conf
-      copy:
-        src: /etc/systemd/journald.conf
-        dest: /etc/systemd/journald.conf.bak
-        remote_src: yes
-
     - name: Make journald persistent
       lineinfile:
         path: /etc/systemd/journald.conf
         regexp: '^#?Storage='
         line: 'Storage=persistent'
       notify: Restart journald
-      register: journald_result
-
-    - debug:
-        var: journald_result
+      tags:
+        - journald
+      diff: yes
 
     # --- 10. Auditd ---
     - name: Ensure auditd is running and enabled
@@ -271,26 +234,10 @@
         name: auditd
         state: started
         enabled: yes
-      register: auditd_result
-
-    - debug:
-        var: auditd_result
+      tags:
+        - auditd
 
     # --- 11. Rsyslog custom logs ---
-    - name: Ensure /etc/rsyslog.d exists
-      file:
-        path: /etc/rsyslog.d
-        state: directory
-        owner: root
-        group: root
-
-    - name: Backup 50-default.conf if exists
-      copy:
-        src: /etc/rsyslog.d/50-default.conf
-        dest: /etc/rsyslog.d/50-default.conf.bak
-        remote_src: yes
-      ignore_errors: yes
-
     - name: Configure rsyslog custom logs
       copy:
         dest: /etc/rsyslog.d/50-default.conf
@@ -301,20 +248,18 @@
           authpriv.*      /var/log/secure
           *.*;auth,authpriv.none  -/var/log/syslog
       notify: Restart rsyslog
-      register: rsyslog_result
+      tags:
+        - rsyslog
+      diff: yes
 
-    - debug:
-        var: rsyslog_result
-
-    - name: Add sudo logging
+    - name: Sudo logging
       lineinfile:
         path: /etc/sudoers
         line: 'Defaults log_host, log_year, logfile="/var/log/sudo.log"'
         validate: 'visudo -cf %s'
-      register: sudo_result
-
-    - debug:
-        var: sudo_result
+      tags:
+        - sudo_logging
+      diff: yes
 
   handlers:
     - name: Restart journald
