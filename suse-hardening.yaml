@@ -10,6 +10,13 @@
     max_password_attempts: 5
     password_lockout_time: 900
 
+    # pwquality ayarları
+    pwq_minlen: 12
+    pwq_dcredit: 1
+    pwq_ucredit: 1
+    pwq_ocredit: 1
+    pwq_lcredit: 1
+
   tasks:
 
     # --- 2. Çekirdek (Kernel/Sysctl) Güvenlik Ayarları ---
@@ -72,6 +79,7 @@
         var: usb_blacklist_result
 
     # --- 3. Kullanıcı ve Parola Politikaları ---
+    # Not: 3.4. görevi, kilitlenme riskini azaltmak için en sona taşınmıştır.
 
     - name: 3.1. Kullanici Oturum Zaman Asimi Ayari
       block:
@@ -114,37 +122,27 @@
     - debug:
         var: login_defs_result
 
-    - name: 3.3. Parola Karmasiklik Gereksinimi (pam_pwquality/pam_cracklib)
+    - name: 3.3. Parola Karmasiklik Gereksinimi (/etc/security/pwquality.conf)
       lineinfile:
-        path: /etc/pam.d/common-password-pc
-        regexp: '^(password\s+(required|requisite)\s+pam_(pwquality|cracklib).so)'
-        line: '\1 retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1'
-        backrefs: yes
+        path: /etc/security/pwquality.conf
+        regexp: '^{{ item.regex }}'
+        line: '{{ item.line }}'
+        state: present
+      loop:
+        - { regex: '^minlen', line: 'minlen = {{ pwq_minlen }}' }
+        - { regex: '^dcredit', line: 'dcredit = {{ pwq_dcredit }}' }
+        - { regex: '^ucredit', line: 'ucredit = {{ pwq_ucredit }}' }
+        - { regex: '^ocredit', line: 'ocredit = {{ pwq_ocredit }}' }
+        - { regex: '^lcredit', line: 'lcredit = {{ pwq_lcredit }}' }
       tags:
         - pam
         - password_complexity
+        - pwquality
       diff: yes
-      register: password_complexity_result
+      register: pwquality_result
 
     - debug:
-        var: password_complexity_result
-
-    - name: 3.4. Basarisiz Giris Denemesi Limiti ve Kilitlenme Ayari
-      blockinfile:
-        path: /etc/pam.d/common-auth-pc
-        block: |
-          auth    required    pam_faillock.so preauth silent audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
-          auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
-          auth    sufficient    pam_faillock.so authsucc audit
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - PAM FAILLOCK"
-      tags:
-        - pam
-        - lockout
-      diff: yes
-      register: faillock_result
-
-    - debug:
-        var: faillock_result
+        var: pwquality_result
 
     # --- 4. Dosya Sistemi İzinleri ve Kontrolleri ---
 
@@ -232,3 +230,21 @@
 
     - debug:
         var: apparmor_result
+
+    # 🛑 EN SON GÖREV: Kilitlenme Riski Olan Görev (3.4'ten taşındı)
+    - name: Z.99. Basarisiz Giris Denemesi Limiti ve Kilitlenme Ayari (SON GÖREV)
+      blockinfile:
+        path: /etc/pam.d/common-auth-pc
+        block: |
+          auth    required    pam_faillock.so preauth silent audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
+          auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
+          auth    sufficient    pam_faillock.so authsucc audit
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - PAM FAILLOCK"
+      tags:
+        - pam
+        - lockout
+      diff: yes
+      register: faillock_result
+
+    - debug:
+        var: faillock_result
