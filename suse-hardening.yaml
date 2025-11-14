@@ -41,14 +41,6 @@
       tags:
         - histignore
 
-    - name: Set HISTIGNORE block in /etc/profile
-      blockinfile:
-        path: /etc/profile
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - HISTIGNORE"
-        block: "{{ histignore_block }}"
-      tags:
-        - histignore
-
     # --- 2. Kernel/Sysctl & USB ---
     - name: Sysctl hardening
       sysctl:
