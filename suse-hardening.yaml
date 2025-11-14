@@ -18,7 +18,11 @@
     pwq_lcredit: 1
 
     # HISTIGNORE
-    histignore_value: "SUSEConnect *:subscription-manager *:rhn-register *"
+    histignore_block: |
+      export HISTIGNORE="SUSEConnect *:subscription-manager *:rhn-register *"
+      export HISTIGNORE="subscription-manager *:rhn-register *"
+      export HISTIGNORE="SUSEConnect *"
+      source /etc/profile
 
     # Performance parametreleri
     nofile_limit: 65535
@@ -27,27 +31,25 @@
   tasks:
 
     # --- 1. HISTIGNORE ---
-    - name: Set HISTIGNORE for sensitive commands
-      lineinfile:
-        path: /etc/profile
-        line: 'export HISTIGNORE="{{ histignore_value }}"'
-        state: present
-      tags:
-        - histignore
-
-    # --- 2. Kernel/Sysctl & USB ---
-    - name: Disable core dumps
+    - name: Backup /etc/profile before HISTIGNORE changes
       copy:
-        content: "* hard core 0\n"
-        dest: /etc/security/limits.d/core_security.conf
+        src: /etc/profile
+        dest: /etc/profile.bak
         owner: root
         group: root
         mode: '0644'
       tags:
-        - limits
-        - core_dump
-      diff: yes
+        - histignore
 
+    - name: Set HISTIGNORE block in /etc/profile
+      blockinfile:
+        path: /etc/profile
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - HISTIGNORE"
+        block: "{{ histignore_block }}"
+      tags:
+        - histignore
+
+    # --- 2. Kernel/Sysctl & USB ---
     - name: Sysctl hardening
       sysctl:
         name: '{{ item.key }}'
@@ -68,7 +70,6 @@
       tags:
         - sysctl
         - network
-      diff: yes
 
     - name: Disable USB auto load
       lineinfile:
@@ -79,7 +80,6 @@
       tags:
         - modprobe
         - usb
-      diff: yes
 
     # --- 3. Kullanıcı ve parola politikaları ---
     - name: Set password policies in /etc/login.defs
@@ -93,7 +93,6 @@
         - { regex: '^PASS_WARN_AGE', line: 'PASS_WARN_AGE\t7' }
       tags:
         - password_policy
-      diff: yes
 
     - name: Set pwquality requirements
       lineinfile:
@@ -108,7 +107,6 @@
         - { regex: '^lcredit', line: 'lcredit = {{ pwq_lcredit }}' }
       tags:
         - pwquality
-      diff: yes
 
     - name: Timeout (session inactivity)
       copy:
@@ -123,82 +121,8 @@
         mode: '0644'
       tags:
         - timeout
-      diff: yes
 
-    - name: Faillock PAM block
-      blockinfile:
-        path: /etc/pam.d/common-auth-pc
-        block: |
-          auth    required    pam_faillock.so preauth silent audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
-          auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
-          auth    sufficient    pam_faillock.so authsucc audit
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - PAM FAILLOCK"
-      tags:
-        - pam
-        - lockout
-      diff: yes
-
-    # --- 4. File Permissions (only existing files) ---
-    - name: Set root dotfiles permissions
-      file:
-        path: /root/.bash_history
-        mode: '0600'
-        owner: root
-        group: root
-        state: file
-      tags:
-        - file_permissions
-      diff: yes
-
-    - name: Set sensitive system files permissions
-      file:
-        path: '{{ item.path }}'
-        mode: '{{ item.mode }}'
-      loop:
-        - { path: /etc/passwd, mode: '0644' }
-        - { path: /etc/shadow, mode: '0000' }
-        - { path: /etc/group, mode: '0644' }
-        - { path: /etc/gshadow, mode: '0000' }
-      tags:
-        - sensitive_files
-      diff: yes
-
-    # --- 5. Ctrl-Alt-Del ---
-    - name: Disable ctrl-alt-del
-      file:
-        path: /etc/systemd/system/ctrl-alt-del.target
-        state: absent
-      tags:
-        - systemd
-      diff: yes
-
-    # --- 6. Banner ---
-    - name: Update /etc/issue and /etc/issue.net
-      copy:
-        content: |
-          Authorized uses only. All activity is logged and monitored. Unauthorized access is prohibited.
-        dest: '{{ item }}'
-        owner: root
-        group: root
-        mode: '0644'
-      loop:
-        - /etc/issue
-        - /etc/issue.net
-      tags:
-        - banner
-      diff: yes
-
-    # --- 7. AppArmor enforce ---
-    - name: Enable AppArmor enforce
-      command: 'aa-enforce /etc/apparmor.d/*'
-      args:
-        warn: no
-      ignore_errors: yes
-      changed_when: true
-      tags:
-        - apparmor
-
-    # --- 8. Performance limits ---
+    # --- 4. Performance limits ---
     - name: Set /etc/security/limits.conf for nofile/nproc
       blockinfile:
         path: /etc/security/limits.conf
@@ -210,14 +134,13 @@
         marker: "# {mark} ANSIBLE MANAGED BLOCK - PERFORMANCE"
       tags:
         - performance
-      diff: yes
 
     - name: Set ulimit
       shell: "ulimit -n {{ nofile_limit }}"
       tags:
         - performance
 
-    # --- 9. Journald persistent log ---
+    # --- 5. Journald persistent log ---
     - name: Make journald persistent
       lineinfile:
         path: /etc/systemd/journald.conf
@@ -226,9 +149,8 @@
       notify: Restart journald
       tags:
         - journald
-      diff: yes
 
-    # --- 10. Auditd ---
+    # --- 6. Auditd ---
     - name: Ensure auditd is running and enabled
       systemd:
         name: auditd
@@ -237,8 +159,8 @@
       tags:
         - auditd
 
-    # --- 11. Rsyslog custom logs ---
-    - name: Configure rsyslog custom logs
+    # --- 7. Rsyslog ---
+    - name: Configure /etc/rsyslog.d/50-default.conf
       copy:
         dest: /etc/rsyslog.d/50-default.conf
         content: |
@@ -250,16 +172,14 @@
       notify: Restart rsyslog
       tags:
         - rsyslog
-      diff: yes
 
-    - name: Sudo logging
+    - name: Add sudo logging defaults
       lineinfile:
         path: /etc/sudoers
         line: 'Defaults log_host, log_year, logfile="/var/log/sudo.log"'
         validate: 'visudo -cf %s'
       tags:
         - sudo_logging
-      diff: yes
 
   handlers:
     - name: Restart journald
