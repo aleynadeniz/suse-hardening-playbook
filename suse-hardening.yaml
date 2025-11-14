@@ -79,29 +79,7 @@
         var: usb_blacklist_result
 
     # --- 3. Kullanıcı ve Parola Politikaları ---
-    # Not: 3.4. görevi, kilitlenme riskini azaltmak için en sona taşınmıştır.
-
-    - name: 3.1. Kullanici Oturum Zaman Asimi Ayari
-      block:
-        - name: Timeout.sh dosyasi olustur
-          copy:
-            content: |
-              # /etc/profile.d/timeout.sh
-              # Kullanici oturum zaman asimi ayari
-              TMOUT={{ session_timeout_seconds }}
-              readonly TMOUT
-              export TMOUT
-            dest: /etc/profile.d/timeout.sh
-            owner: root
-            group: root
-            mode: '0644'
-          tags:
-            - timeout
-          diff: yes
-          register: timeout_result
-
-    - debug:
-        var: timeout_result
+    # Not: 3.1 ve 3.4 görevleri kilitlenme riskini azaltmak için en sona taşınmıştır.
 
     - name: 3.2. Parola Politikalarini Guclendir (/etc/login.defs)
       lineinfile:
@@ -231,7 +209,30 @@
     - debug:
         var: apparmor_result
 
-    # 🛑 EN SON GÖREV: Kilitlenme Riski Olan Görev (3.4'ten taşındı)
+    # 🛑 EN SON GÜVENLİK ADIMLARI (Bağlantı Kesme Riski Olanlar)
+
+    - name: Z.98. Kullanici Oturum Zaman Asimi Ayari (SONA TAŞINDI)
+      block:
+        - name: Timeout.sh dosyasi olustur
+          copy:
+            content: |
+              # /etc/profile.d/timeout.sh
+              # Kullanici oturum zaman asimi ayari
+              TMOUT={{ session_timeout_seconds }}
+              readonly TMOUT
+              export TMOUT
+            dest: /etc/profile.d/timeout.sh
+            owner: root
+            group: root
+            mode: '0644'
+          tags:
+            - timeout
+          diff: yes
+          register: timeout_final_result
+
+    - debug:
+        var: timeout_final_result
+
     - name: Z.99. Basarisiz Giris Denemesi Limiti ve Kilitlenme Ayari (SON GÖREV)
       blockinfile:
         path: /etc/pam.d/common-auth-pc
