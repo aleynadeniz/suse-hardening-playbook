@@ -32,18 +32,24 @@
         path: /etc/profile
         line: 'export HISTIGNORE="{{ histignore_value }}"'
         state: present
+      tags:
+        - histignore
       diff: yes
       register: histignore_result
-      tags:
-        - histignore
 
-    - debug:
+    - name: Show HISTIGNORE changes
+      debug:
         var: histignore_result
 
-    - name: Reload /etc/profile
-      command: source /etc/profile
+    - name: Reload /etc/profile in shell
+      shell: source /etc/profile
       tags:
         - histignore
+      register: reload_profile_result
+
+    - name: Show reload /etc/profile result
+      debug:
+        var: reload_profile_result
 
     # --- 2. Kernel/Sysctl & USB ---
     - name: Disable core dumps
@@ -53,11 +59,11 @@
         owner: root
         group: root
         mode: '0644'
-      diff: yes
-      register: core_dump_result
       tags:
         - limits
         - core_dump
+      diff: yes
+      register: core_dump_result
 
     - debug:
         var: core_dump_result
@@ -79,11 +85,11 @@
         - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
         - { key: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
         - { key: 'net.ipv4.conf.all.log_martians', value: '1' }
-      diff: yes
-      register: sysctl_result
       tags:
         - sysctl
         - network
+      diff: yes
+      register: sysctl_result
 
     - debug:
         var: sysctl_result
@@ -94,11 +100,11 @@
         line: 'install usb-storage /bin/true'
         create: yes
         state: present
-      diff: yes
-      register: usb_blacklist_result
       tags:
         - modprobe
         - usb
+      diff: yes
+      register: usb_blacklist_result
 
     - debug:
         var: usb_blacklist_result
@@ -113,10 +119,10 @@
         - { regex: '^PASS_MAX_DAYS', line: 'PASS_MAX_DAYS\t{{ max_password_age }}' }
         - { regex: '^PASS_MIN_DAYS', line: 'PASS_MIN_DAYS\t{{ min_password_age }}' }
         - { regex: '^PASS_WARN_AGE', line: 'PASS_WARN_AGE\t7' }
-      diff: yes
-      register: login_defs_result
       tags:
         - password_policy
+      diff: yes
+      register: login_defs_result
 
     - debug:
         var: login_defs_result
@@ -132,10 +138,10 @@
         - { regex: '^ucredit', line: 'ucredit = {{ pwq_ucredit }}' }
         - { regex: '^ocredit', line: 'ocredit = {{ pwq_ocredit }}' }
         - { regex: '^lcredit', line: 'lcredit = {{ pwq_lcredit }}' }
-      diff: yes
-      register: pwquality_result
       tags:
         - pwquality
+      diff: yes
+      register: pwquality_result
 
     - debug:
         var: pwquality_result
@@ -151,10 +157,10 @@
         owner: root
         group: root
         mode: '0644'
-      diff: yes
-      register: timeout_result
       tags:
         - timeout
+      diff: yes
+      register: timeout_result
 
     - debug:
         var: timeout_result
@@ -167,11 +173,11 @@
           auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
           auth    sufficient    pam_faillock.so authsucc audit
         marker: "# {mark} ANSIBLE MANAGED BLOCK - PAM FAILLOCK"
-      diff: yes
-      register: faillock_result
       tags:
         - pam
         - lockout
+      diff: yes
+      register: faillock_result
 
     - debug:
         var: faillock_result
@@ -188,13 +194,13 @@
         - /root/.profile
         - /root/.bash_history
         - /root/.bash_logout
-      diff: yes
-      register: root_dotfiles_result
       tags:
         - file_permissions
+      diff: yes
+      register: file_permissions_result
 
     - debug:
-        var: root_dotfiles_result
+        var: file_permissions_result
 
     - name: Set sensitive system files permissions
       file:
@@ -205,10 +211,10 @@
         - { path: /etc/shadow, mode: '0000' }
         - { path: /etc/group, mode: '0644' }
         - { path: /etc/gshadow, mode: '0000' }
-      diff: yes
-      register: sensitive_files_result
       tags:
         - sensitive_files
+      diff: yes
+      register: sensitive_files_result
 
     - debug:
         var: sensitive_files_result
@@ -218,10 +224,10 @@
       file:
         path: /etc/systemd/system/ctrl-alt-del.target
         state: absent
-      diff: yes
-      register: ctrl_alt_del_result
       tags:
         - systemd
+      diff: yes
+      register: ctrl_alt_del_result
 
     - debug:
         var: ctrl_alt_del_result
@@ -238,10 +244,10 @@
       loop:
         - /etc/issue
         - /etc/issue.net
-      diff: yes
-      register: banner_result
       tags:
         - banner
+      diff: yes
+      register: banner_result
 
     - debug:
         var: banner_result
@@ -253,10 +259,10 @@
         warn: no
       ignore_errors: yes
       changed_when: true
-      diff: yes
-      register: apparmor_result
       tags:
         - apparmor
+      diff: yes
+      register: apparmor_result
 
     - debug:
         var: apparmor_result
@@ -271,20 +277,19 @@
           * soft nproc {{ nproc_limit }}
           * hard nproc {{ nproc_limit }}
         marker: "# {mark} ANSIBLE MANAGED BLOCK - PERFORMANCE"
-      diff: yes
-      register: performance_limits_result
       tags:
         - performance
+      diff: yes
+      register: performance_limits_result
 
     - debug:
         var: performance_limits_result
 
     - name: Set ulimit
       shell: "ulimit -n {{ nofile_limit }}"
-      diff: yes
-      register: ulimit_result
       tags:
         - performance
+      register: ulimit_result
 
     - debug:
         var: ulimit_result
@@ -295,11 +300,11 @@
         path: /etc/systemd/journald.conf
         regexp: '^#?Storage='
         line: 'Storage=persistent'
-      diff: yes
-      register: journald_result
       notify: Restart journald
       tags:
         - journald
+      diff: yes
+      register: journald_result
 
     - debug:
         var: journald_result
@@ -310,10 +315,10 @@
         name: auditd
         state: started
         enabled: yes
-      diff: yes
-      register: auditd_result
       tags:
         - auditd
+      diff: yes
+      register: auditd_result
 
     - debug:
         var: auditd_result
@@ -328,11 +333,11 @@
           auth.*          /var/log/auth.log
           authpriv.*      /var/log/secure
           *.*;auth,authpriv.none  -/var/log/syslog
-      diff: yes
-      register: rsyslog_result
       notify: Restart rsyslog
       tags:
         - rsyslog
+      diff: yes
+      register: rsyslog_result
 
     - debug:
         var: rsyslog_result
@@ -342,10 +347,10 @@
         path: /etc/sudoers
         line: 'Defaults log_host, log_year, logfile="/var/log/sudo.log"'
         validate: 'visudo -cf %s'
-      diff: yes
-      register: sudoers_result
       tags:
         - sudo_logging
+      diff: yes
+      register: sudoers_result
 
     - debug:
         var: sudoers_result
