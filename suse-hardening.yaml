@@ -1,5 +1,5 @@
 ---
-- name: SUSE Hardening Ayarlari
+- name: SUSE Hardening + Audit + Logging + Performance
   hosts: suse_hosts
   become: yes
 
@@ -17,27 +17,52 @@
     pwq_ocredit: 1
     pwq_lcredit: 1
 
+    # HISTIGNORE
+    histignore_value: "SUSEConnect *:subscription-manager *:rhn-register *"
+
+    # Performance parametreleri
+    nofile_limit: 65535
+    nproc_limit: 65535
+
   tasks:
 
-    # --- 2. Çekirdek (Kernel/Sysctl) Güvenlik Ayarları ---
+    # --- 1. HISTIGNORE ---
+    - name: Set HISTIGNORE for sensitive commands
+      lineinfile:
+        path: /etc/profile
+        line: 'export HISTIGNORE="{{ histignore_value }}"'
+        state: present
+      diff: yes
+      register: histignore_result
+      tags:
+        - histignore
 
-    - name: 2.1. Core Dump'lari Devre Disi Birak
+    - debug:
+        var: histignore_result
+
+    - name: Reload /etc/profile
+      command: source /etc/profile
+      tags:
+        - histignore
+
+    # --- 2. Kernel/Sysctl & USB ---
+    - name: Disable core dumps
       copy:
         content: "* hard core 0\n"
         dest: /etc/security/limits.d/core_security.conf
         owner: root
         group: root
         mode: '0644'
+      diff: yes
+      register: core_dump_result
       tags:
         - limits
         - core_dump
-      diff: yes
-      register: core_dump_result
 
     - debug:
         var: core_dump_result
 
-    - name: 2.2. Sysctl Ayarlari (net.ipv4 Hardening)
+    - name: Sysctl hardening
       sysctl:
         name: '{{ item.key }}'
         value: '{{ item.value }}'
@@ -54,77 +79,105 @@
         - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
         - { key: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
         - { key: 'net.ipv4.conf.all.log_martians', value: '1' }
+      diff: yes
+      register: sysctl_result
       tags:
         - sysctl
         - network
-      diff: yes
-      register: sysctl_result
 
     - debug:
         var: sysctl_result
 
-    - name: 2.3. USB Otomatik Yüklemeyi Devre Disi Birak
+    - name: Disable USB auto load
       lineinfile:
         path: /etc/modprobe.d/usb_blacklist.conf
         line: 'install usb-storage /bin/true'
         create: yes
         state: present
+      diff: yes
+      register: usb_blacklist_result
       tags:
         - modprobe
         - usb
-      diff: yes
-      register: usb_blacklist_result
 
     - debug:
         var: usb_blacklist_result
 
-    # --- 3. Kullanıcı ve Parola Politikaları ---
-    # Not: 3.1 ve 3.4 görevleri kilitlenme riskini azaltmak için en sona taşınmıştır.
-
-    - name: 3.2. Parola Politikalarini Guclendir (/etc/login.defs)
+    # --- 3. Kullanıcı ve parola politikaları ---
+    - name: Set password policies in /etc/login.defs
       lineinfile:
         path: /etc/login.defs
         regexp: '^{{ item.regex }}'
         line: '{{ item.line }}'
-        state: present
       loop:
         - { regex: '^PASS_MAX_DAYS', line: 'PASS_MAX_DAYS\t{{ max_password_age }}' }
         - { regex: '^PASS_MIN_DAYS', line: 'PASS_MIN_DAYS\t{{ min_password_age }}' }
         - { regex: '^PASS_WARN_AGE', line: 'PASS_WARN_AGE\t7' }
-      tags:
-        - password_policy
-        - login_defs
       diff: yes
       register: login_defs_result
+      tags:
+        - password_policy
 
     - debug:
         var: login_defs_result
 
-    - name: 3.3. Parola Karmasiklik Gereksinimi (/etc/security/pwquality.conf)
+    - name: Set pwquality requirements
       lineinfile:
         path: /etc/security/pwquality.conf
         regexp: '^{{ item.regex }}'
         line: '{{ item.line }}'
-        state: present
       loop:
         - { regex: '^minlen', line: 'minlen = {{ pwq_minlen }}' }
         - { regex: '^dcredit', line: 'dcredit = {{ pwq_dcredit }}' }
         - { regex: '^ucredit', line: 'ucredit = {{ pwq_ucredit }}' }
         - { regex: '^ocredit', line: 'ocredit = {{ pwq_ocredit }}' }
         - { regex: '^lcredit', line: 'lcredit = {{ pwq_lcredit }}' }
-      tags:
-        - pam
-        - password_complexity
-        - pwquality
       diff: yes
       register: pwquality_result
+      tags:
+        - pwquality
 
     - debug:
         var: pwquality_result
 
-    # --- 4. Dosya Sistemi İzinleri ve Kontrolleri ---
+    - name: Timeout (session inactivity)
+      copy:
+        content: |
+          # /etc/profile.d/timeout.sh
+          TMOUT={{ session_timeout_seconds }}
+          readonly TMOUT
+          export TMOUT
+        dest: /etc/profile.d/timeout.sh
+        owner: root
+        group: root
+        mode: '0644'
+      diff: yes
+      register: timeout_result
+      tags:
+        - timeout
 
-    - name: 4.1. Kullanici Ana Dizin ve Shell Dosyalarinin Izinlerini Ayarla
+    - debug:
+        var: timeout_result
+
+    - name: Faillock PAM block
+      blockinfile:
+        path: /etc/pam.d/common-auth-pc
+        block: |
+          auth    required    pam_faillock.so preauth silent audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
+          auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
+          auth    sufficient    pam_faillock.so authsucc audit
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - PAM FAILLOCK"
+      diff: yes
+      register: faillock_result
+      tags:
+        - pam
+        - lockout
+
+    - debug:
+        var: faillock_result
+
+    # --- 4. File Permissions ---
+    - name: Set root dotfiles permissions
       file:
         path: '{{ item }}'
         mode: '0600'
@@ -135,15 +188,15 @@
         - /root/.profile
         - /root/.bash_history
         - /root/.bash_logout
+      diff: yes
+      register: root_dotfiles_result
       tags:
         - file_permissions
-      diff: yes
-      register: file_permissions_result
 
     - debug:
-        var: file_permissions_result
+        var: root_dotfiles_result
 
-    - name: 4.2. Hassas Sistem Dosyalarinin Izinlerini Ayarla
+    - name: Set sensitive system files permissions
       file:
         path: '{{ item.path }}'
         mode: '{{ item.mode }}'
@@ -152,31 +205,29 @@
         - { path: /etc/shadow, mode: '0000' }
         - { path: /etc/group, mode: '0644' }
         - { path: /etc/gshadow, mode: '0000' }
-      tags:
-        - file_permissions
-        - sensitive_files
       diff: yes
       register: sensitive_files_result
+      tags:
+        - sensitive_files
 
     - debug:
         var: sensitive_files_result
 
-    # --- 5. Diğer Güvenlik Ayarları ---
-
-    - name: 5.1. ctrl-alt-del Islemini Devre Disi Birak
+    # --- 5. Ctrl-Alt-Del ---
+    - name: Disable ctrl-alt-del
       file:
         path: /etc/systemd/system/ctrl-alt-del.target
         state: absent
-      tags:
-        - systemd
-        - ctrl_alt_del
       diff: yes
       register: ctrl_alt_del_result
+      tags:
+        - systemd
 
     - debug:
         var: ctrl_alt_del_result
 
-    - name: 5.2. /etc/issue ve /etc/issue.net Dosyalarini Guvenlik Bilgileriyle Guncelle
+    # --- 6. Banner ---
+    - name: Update /etc/issue and /etc/issue.net
       copy:
         content: |
           Authorized uses only. All activity is logged and monitored. Unauthorized access is prohibited.
@@ -187,65 +238,125 @@
       loop:
         - /etc/issue
         - /etc/issue.net
-      tags:
-        - banner
       diff: yes
       register: banner_result
+      tags:
+        - banner
 
     - debug:
         var: banner_result
 
-    - name: 5.3. AppArmor'u Etkinlestir ve Profilleri Zorunlu Moda Al
+    # --- 7. AppArmor enforce ---
+    - name: Enable AppArmor enforce
       command: 'aa-enforce /etc/apparmor.d/*'
       args:
         warn: no
       ignore_errors: yes
       changed_when: true
-      tags:
-        - mac
-        - apparmor
+      diff: yes
       register: apparmor_result
+      tags:
+        - apparmor
 
     - debug:
         var: apparmor_result
 
-    # 🛑 EN SON GÜVENLİK ADIMLARI (Bağlantı Kesme Riski Olanlar)
-
-    - name: Z.98. Kullanici Oturum Zaman Asimi Ayari (SONA TAŞINDI)
-      block:
-        - name: Timeout.sh dosyasi olustur
-          copy:
-            content: |
-              # /etc/profile.d/timeout.sh
-              # Kullanici oturum zaman asimi ayari
-              TMOUT={{ session_timeout_seconds }}
-              readonly TMOUT
-              export TMOUT
-            dest: /etc/profile.d/timeout.sh
-            owner: root
-            group: root
-            mode: '0644'
-          tags:
-            - timeout
-          diff: yes
-          register: timeout_final_result
-
-    - debug:
-        var: timeout_final_result
-
-    - name: Z.99. Basarisiz Giris Denemesi Limiti ve Kilitlenme Ayari (SON GÖREV)
+    # --- 8. Performance limits ---
+    - name: Set /etc/security/limits.conf for nofile/nproc
       blockinfile:
-        path: /etc/pam.d/common-auth-pc
+        path: /etc/security/limits.conf
         block: |
-          auth    required    pam_faillock.so preauth silent audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
-          auth    [default=die]    pam_faillock.so authfail audit deny={{ max_password_attempts }} unlock_time={{ password_lockout_time }}
-          auth    sufficient    pam_faillock.so authsucc audit
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - PAM FAILLOCK"
-      tags:
-        - pam
-        - lockout
+          * soft nofile {{ nofile_limit }}
+          * hard nofile {{ nofile_limit }}
+          * soft nproc {{ nproc_limit }}
+          * hard nproc {{ nproc_limit }}
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - PERFORMANCE"
       diff: yes
-      register: faillock_result
+      register: performance_limits_result
+      tags:
+        - performance
 
     - debug:
-        var: faillock_result
+        var: performance_limits_result
+
+    - name: Set ulimit
+      shell: "ulimit -n {{ nofile_limit }}"
+      diff: yes
+      register: ulimit_result
+      tags:
+        - performance
+
+    - debug:
+        var: ulimit_result
+
+    # --- 9. Journald persistent log ---
+    - name: Make journald persistent
+      lineinfile:
+        path: /etc/systemd/journald.conf
+        regexp: '^#?Storage='
+        line: 'Storage=persistent'
+      diff: yes
+      register: journald_result
+      notify: Restart journald
+      tags:
+        - journald
+
+    - debug:
+        var: journald_result
+
+    # --- 10. Auditd ---
+    - name: Ensure auditd is running and enabled
+      systemd:
+        name: auditd
+        state: started
+        enabled: yes
+      diff: yes
+      register: auditd_result
+      tags:
+        - auditd
+
+    - debug:
+        var: auditd_result
+
+    # --- 11. Rsyslog custom logs ---
+    - name: Configure rsyslog custom logs
+      copy:
+        dest: /etc/rsyslog.d/50-default.conf
+        content: |
+          cron.*          /var/log/cron.log
+          local1.*        /var/log/sudo.log
+          auth.*          /var/log/auth.log
+          authpriv.*      /var/log/secure
+          *.*;auth,authpriv.none  -/var/log/syslog
+      diff: yes
+      register: rsyslog_result
+      notify: Restart rsyslog
+      tags:
+        - rsyslog
+
+    - debug:
+        var: rsyslog_result
+
+    - name: Sudo logging
+      lineinfile:
+        path: /etc/sudoers
+        line: 'Defaults log_host, log_year, logfile="/var/log/sudo.log"'
+        validate: 'visudo -cf %s'
+      diff: yes
+      register: sudoers_result
+      tags:
+        - sudo_logging
+
+    - debug:
+        var: sudoers_result
+
+  handlers:
+    - name: Restart journald
+      systemd:
+        name: systemd-journald
+        state: restarted
+
+    - name: Restart rsyslog
+      systemd:
+        name: rsyslog
+        state: restarted
