@@ -17,7 +17,7 @@
     pwq_ocredit: 1
     pwq_lcredit: 1
 
-    # HISTIGNORE
+    # HISTIGNORE block
     histignore_block: |
       export HISTIGNORE="SUSEConnect *:subscription-manager *:rhn-register *"
       export HISTIGNORE="subscription-manager *:rhn-register *"
@@ -140,7 +140,27 @@
       tags:
         - performance
 
-    # --- 5. Journald persistent log ---
+    # --- 5. /root/.bash_history permissions + backup (diff) ---
+    - name: Backup /root/.bash_history before change
+      copy:
+        src: /root/.bash_history
+        dest: /root/.bash_history.bak
+        owner: root
+        group: root
+        mode: '0600'
+      tags:
+        - file_permissions
+
+    - name: Set /root/.bash_history permissions
+      file:
+        path: /root/.bash_history
+        owner: root
+        group: root
+        mode: '0600'
+      tags:
+        - file_permissions
+
+    # --- 6. Journald persistent log ---
     - name: Make journald persistent
       lineinfile:
         path: /etc/systemd/journald.conf
@@ -150,7 +170,7 @@
       tags:
         - journald
 
-    # --- 6. Auditd ---
+    # --- 7. Auditd ---
     - name: Ensure auditd is running and enabled
       systemd:
         name: auditd
@@ -159,7 +179,7 @@
       tags:
         - auditd
 
-    # --- 7. Rsyslog ---
+    # --- 8. Rsyslog ---
     - name: Configure /etc/rsyslog.d/50-default.conf
       copy:
         dest: /etc/rsyslog.d/50-default.conf
